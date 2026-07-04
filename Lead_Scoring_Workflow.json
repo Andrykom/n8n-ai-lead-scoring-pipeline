@@ -1,0 +1,251 @@
+{
+  "name": "My workflow",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -400,
+        -32
+      ],
+      "id": "da3a9e2d-62ad-4468-b4ff-9f37c7b3188b",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "return [\n  {\n    \"name\": \"Origin Coffee Roasters\",\n    \"address\": \"65 Charlotte Rd, London EC2A 3PE\",\n    \"phone\": \"+44 20 7729 4422\",\n    \"website\": \"https://www.origincoffee.co.uk\"\n  },\n  {\n    \"name\": \"Joe's Quick Bites & Brew\",\n    \"address\": \"12 High St, London\",\n    \"phone\": \"07700900077\",\n    \"website\": \"\"\n  },\n  {\n    \"name\": \"Ozone Coffee Roasters\",\n    \"address\": \"11 Leonard St, London EC2A 4AQ\",\n    \"phone\": \"+44(0)2074903100\",\n    \"website\": \"https://ozonecoffee.co.uk\"\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -192,
+        -32
+      ],
+      "id": "20570bdc-5353-4c58-9d5f-03433b9eafc9",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "return $input.all().filter(item => {\n    // 1. Оставляем только те лиды, у которых есть ссылка на сайт\n    return item.json.website && item.json.website.trim() !== \"\";\n}).map(item => {\n    // 2. Очищаем телефон от скобок, дефисов и пробелов, оставляем только цифры и плюс\n    let cleanPhone = item.json.phone.replace(/[^\\d+]/g, '');\n    \n    // 3. Небольшая логика нормализации (если британский номер начинается с 0, меняем на +44)\n    if (cleanPhone.startsWith('07')) {\n        cleanPhone = '+44' + cleanPhone.substring(1);\n    }\n    \n    // Возвращаем обновленный объект\n    return {\n        json: {\n            name: item.json.name,\n            address: item.json.address,\n            phone: cleanPhone, // теперь телефон в идеальном формате\n            website: item.json.website\n        }\n    };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        16,
+        -32
+      ],
+      "id": "f6b047df-4fa4-4dbe-ad2a-43b3758a9281",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "url": "={{ $json.website }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        224,
+        -32
+      ],
+      "id": "f1c21ebc-8489-406b-b04a-e1b1c2944c78",
+      "name": "HTTP Request",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "extractHtmlContent",
+        "extractionValues": {
+          "values": [
+            {
+              "key": "website_text",
+              "cssSelector": "body"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.html",
+      "typeVersion": 1.2,
+      "position": [
+        432,
+        -32
+      ],
+      "id": "535df74e-47eb-4458-8c5a-5458c091f8aa",
+      "name": "HTML"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "models/gemini-2.5-flash",
+          "mode": "list",
+          "cachedResultName": "models/gemini-2.5-flash"
+        },
+        "messages": {
+          "values": [
+            {
+              "content": "=You are an expert B2B lead scoring AI assistant. Your task is to analyze the text extracted from a coffee shop's website and determine whether it is a high-end specialty coffee shop (focusing on high quality, own roasting, alternative brewing methods) or a standard mass-market cafe.\n\nWebsite text to analyze:\n{{ $json.website_text }}\n\nAnalyze the text and provide the result STRICTLY in JSON format without any Markdown formatting or code blocks (do not use ```json). The JSON must exactly match this structure:\n{\n  \"score\": [integer from 1 to 10, where 10 is an ideal specialty coffee shop],\n  \"reason\": \"[a brief, one-sentence justification for your score]\",\n  \"is_chain\": [boolean true/false, based on whether it appears to be a large chain]\n}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.googleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        640,
+        -32
+      ],
+      "id": "18f89103-a397-4843-ae5f-91c8c6406f5f",
+      "name": "Message a model",
+      "credentials": {
+        "googlePalmApi": {
+          "id": "cE2mh2LMujeSabCE",
+          "name": "Google Gemini(PaLM) Api account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const originalItems = $('Code in JavaScript1').all();\n\nreturn $input.all().map((item, index) => {\n    let aiData = {};\n    \n    try {\n        let rawText = \"\";\n        if (item.json.content && item.json.content.parts && item.json.content.parts.length > 0) {\n            rawText = item.json.content.parts[0].text;\n        } else if (item.json.text) {\n            rawText = item.json.text; \n        }\n        \n        let jsonStart = rawText.indexOf('{');\n        let jsonEnd = rawText.lastIndexOf('}');\n        \n        if (jsonStart !== -1 && jsonEnd !== -1) {\n            let cleanJsonString = rawText.substring(jsonStart, jsonEnd + 1);\n            aiData = JSON.parse(cleanJsonString);\n        }\n    } catch (e) {\n        aiData = { score: 0, reason: \"Error parsing AI response\", is_chain: false };\n    }\n    let originalData = originalItems[index] ? originalItems[index].json : {};\n\n    return {\n        json: {\n            company_name: originalData.name || \"N/A\",\n            phone_number: originalData.phone || \"N/A\",\n            website: originalData.website || \"N/A\",\n            ai_score: aiData.score || 0,\n            ai_reason: aiData.reason || \"N/A\",\n            is_chain: aiData.is_chain !== undefined ? aiData.is_chain : false\n        }\n    };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        -32
+      ],
+      "id": "93bbb3b6-10a0-4bd5-8723-edff9dfe7452",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "cd783a8f-ebfb-4cf3-a0f2-a1fd4d9ca8ec",
+              "leftValue": "={{ $json.ai_score }}",
+              "rightValue": 7,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1200,
+        -32
+      ],
+      "id": "2eb3f0e1-5ac0-4055-bf0e-13c68892e366",
+      "name": "If"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "HTML",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTML": {
+      "main": [
+        [
+          {
+            "node": "Message a model",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Message a model": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "83298764-c45e-4fde-845e-bc35b546fade",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "29bee28e2b366189010cf74620e84560aca9b98835bd6a34f6f804ed884f3a9e"
+  },
+  "nodeGroups": [],
+  "id": "BHicFCj4K2GWzhe6",
+  "tags": []
+}
